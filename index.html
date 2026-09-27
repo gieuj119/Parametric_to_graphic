@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>파라메트릭 → 그래픽 EQ 변환기</title>
+<!-- Poweramp GZip 압축 해제용 라이브러리 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
  :root{--bg:#121214;--panel:#1c1c1f;--accent:#4fa3ff;--accent2:#ff9f43;--text:#eee;--muted:#9a9a9e;--border:#2c2c30;}
  @media (prefers-color-scheme: light){
@@ -64,16 +66,16 @@
 <div class="wrap">
 <div class="card">
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
- <p class="sub">Poweramp, AutoEq, Squiglink 등 모든 EQ 파일(JSON, TXT) 변환 지원</p>
+ <p class="sub">Poweramp 내보내기 파일 포함 모든 EQ 지원</p>
 
  <label for="fileInput" class="file-box">
-  <span>📁 Poweramp 및 일반 EQ 파일 선택 (.json / .txt)</span>
-  <small>Poweramp 내보내기 파일 및 일반 파라메트릭 데이터 완벽 지원</small>
+  <span>📁 Poweramp 및 EQ 파일 선택 (.json / .txt)</span>
+  <small>Poweramp 압축 JSON 파일 자동 해제 및 파싱 지원</small>
   <input type="file" id="fileInput" accept="*/*" onchange="loadFile(event)">
  </label>
  <div id="file-status"></div>
 
- <label>EQ 데이터 (직접 붙여넣기 가능)</label>
+ <label>EQ 데이터 (내용 확인 및 수정 가능)</label>
  <textarea id="json"></textarea>
 
  <div class="row">
@@ -94,7 +96,7 @@
   <span><span class="dot" style="background:#4fa3ff"></span>원본 곡선</span>
   <span><span class="dot" style="background:#ff9f43"></span>그래픽 EQ 근사</span>
  </div>
- <div class="hint">RBJ biquad 공식을 사용해 파라메트릭 필터를 복원한 후 경사하강법으로 선택한 타겟 주파수의 게인을 최적화합니다.</div>
+ <div class="hint">RBJ biquad 공식을 사용해 원본 곡선을 만들고, 경사하강법으로 지정 주파수의 게인을 최적화합니다.</div>
 </div>
 </div>
 
@@ -159,17 +161,16 @@ function curveFor(bands, freqs, fs){
  return total;
 }
 
-// Poweramp 전용 JSON 구조 및 범용 파서
+// Poweramp 및 일반 JSON 파서
 function parseInput(text){
  text=(text||'').trim();
  if (!text) return null;
 
- // 1. JSON 분석 (Poweramp 포함)
  try {
   const data = JSON.parse(text);
   let rawBands = null;
 
-  // Poweramp JSON 구조 감지
+  // Poweramp JSON 구조 탐색
   if (data.presets && Array.isArray(data.presets)) {
    for (let p of data.presets) {
     if (p.bands || p.parametric || p.parametric_eq) {
@@ -218,7 +219,7 @@ function parseInput(text){
   }
  } catch(e) {}
 
- // 2. GraphicEQ / Poweramp 텍스트 처리
+ // GraphicEQ 텍스트
  const geq = text.match(/GraphicEQ:\s*(.+)/i);
  if (geq) {
   const pts = geq[1].split(';').map(s=>s.trim()).filter(Boolean).map(s=>{
@@ -227,7 +228,7 @@ function parseInput(text){
   if (pts.length) return {mode:'curve', points:pts};
  }
 
- // 3. Equalizer APO / Filter 텍스트 처리
+ // Equalizer APO / 일반 txt
  const lines = text.split(/\r?\n/);
  const bands = [];
  lines.forEach(l => {
@@ -258,6 +259,7 @@ function curveForParsed(parsed, freqs, fs){
  });
 }
 
+// 바이너리 / GZip 압축 해제 지원 파일 로더
 function loadFile(ev){
  const f = ev.target.files[0]; 
  if (!f) return;
@@ -266,7 +268,19 @@ function loadFile(ev){
  const reader = new FileReader();
 
  reader.onload = e => {
-  const text = e.target.result;
+  let text = '';
+  const buffer = e.target.result;
+
+  // 1. Poweramp GZip 압축 해제 시도
+  try {
+   const decompressed = pako.ungzip(new Uint8Array(buffer), { to: 'string' });
+   text = decompressed;
+  } catch (gzipErr) {
+   // 2. 압축 파일이 아닌 경우 일반 텍스트 변환 시도
+   const decoder = new TextDecoder('utf-8');
+   text = decoder.decode(buffer);
+  }
+
   document.getElementById('json').value = text;
   
   const parsed = parseInput(text);
@@ -277,17 +291,18 @@ function loadFile(ev){
    convert();
   } else {
    statusEl.style.color = '#ff6b6b';
-   statusEl.textContent = `✖ [${f.name}] Poweramp 또는 지원 규격이 아닌 파일입니다. (텍스트 복사/붙여넣기를 권장합니다)`;
+   statusEl.textContent = `✖ [${f.name}] 파일 데이터 파싱 실패.`;
   }
  };
 
- reader.readAsText(f);
+ // ArrayBuffer로 바이너리 데이터 읽기
+ reader.readAsArrayBuffer(f);
 }
 
 function convert(){
  const errEl=document.getElementById('err'); errEl.textContent='';
  const parsed=parseInput(document.getElementById('json').value);
- if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없습니다. 데이터를 텍스트 상자에 붙여넣어 보세요.'; return; }
+ if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없습니다.'; return; }
  const fs=parseFloat(document.getElementById('fs').value)||48000;
  const Q=parseFloat(document.getElementById('q').value)||1.1;
  const targetFreqs=document.getElementById('freqs').value.split(',').map(s=>parseFloat(s.trim())).filter(n=>!isNaN(n));
@@ -351,7 +366,7 @@ function convert(){
  drawCurve(fitted,'#ff9f43');
 }
 
-// 샘플 데이터
+// 기본 샘플 데이터
 document.getElementById('json').value = JSON.stringify({
  "name":"샘플",
  "bands":[
