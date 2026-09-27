@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>파라메트릭 → 그래픽 EQ 변환기</title>
-<!-- Poweramp GZip 압축 해제용 라이브러리 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
  :root{--bg:#121214;--panel:#1c1c1f;--accent:#4fa3ff;--accent2:#ff9f43;--text:#eee;--muted:#9a9a9e;--border:#2c2c30;}
@@ -66,16 +65,16 @@
 <div class="wrap">
 <div class="card">
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
- <p class="sub">Poweramp 내보내기 파일 포함 모든 EQ 지원</p>
+ <p class="sub">Poweramp(q20 등) 포함 모든 EQ JSON/TXT 파일 지원</p>
 
  <label for="fileInput" class="file-box">
-  <span>📁 Poweramp 및 EQ 파일 선택 (.json / .txt)</span>
-  <small>Poweramp 압축 JSON 파일 자동 해제 및 파싱 지원</small>
+  <span>📁 EQ 파일 선택 (.json / .txt)</span>
+  <small>Poweramp 내보내기 파일(q20 no anc.json 등) 완벽 파싱 지원</small>
   <input type="file" id="fileInput" accept="*/*" onchange="loadFile(event)">
  </label>
  <div id="file-status"></div>
 
- <label>EQ 데이터 (내용 확인 및 수정 가능)</label>
+ <label>EQ 데이터 (텍스트 직접 붙여넣기 가능)</label>
  <textarea id="json"></textarea>
 
  <div class="row">
@@ -96,7 +95,7 @@
   <span><span class="dot" style="background:#4fa3ff"></span>원본 곡선</span>
   <span><span class="dot" style="background:#ff9f43"></span>그래픽 EQ 근사</span>
  </div>
- <div class="hint">RBJ biquad 공식을 사용해 원본 곡선을 만들고, 경사하강법으로 지정 주파수의 게인을 최적화합니다.</div>
+ <div class="hint">RBJ biquad 공식을 사용해 원본 곡선을 계산하고, 경사하강법으로 지정 주파수의 게인을 최적화합니다.</div>
 </div>
 </div>
 
@@ -161,42 +160,52 @@ function curveFor(bands, freqs, fs){
  return total;
 }
 
-// Poweramp 및 일반 JSON 파서
+// Poweramp 심층 파서
 function parseInput(text){
  text=(text||'').trim();
  if (!text) return null;
 
  try {
   const data = JSON.parse(text);
-  let rawBands = null;
+  let rawBands = [];
 
-  // Poweramp JSON 구조 탐색
+  // Poweramp 특유의 presets 내부 구조 탐색
   if (data.presets && Array.isArray(data.presets)) {
-   for (let p of data.presets) {
-    if (p.bands || p.parametric || p.parametric_eq) {
-     rawBands = p.bands || p.parametric || p.parametric_eq;
-     break;
-    }
-   }
+   data.presets.forEach(p => {
+    if (p.eq && Array.isArray(p.eq)) rawBands.push(...p.eq);
+    if (p.bands && Array.isArray(p.bands)) rawBands.push(...p.bands);
+    if (p.parametric && Array.isArray(p.parametric)) rawBands.push(...p.parametric);
+   });
   }
 
-  if (!rawBands && Array.isArray(data)) {
-   rawBands = data;
-  } else if (!rawBands && typeof data === 'object' && data !== null) {
-   rawBands = data.bands || data.filters || data.eq || data.parametric || data.parametric_eq;
-   if (!rawBands) {
-    for (let key in data) {
-     if (Array.isArray(data[key]) && data[key].length > 0) {
-      rawBands = data[key];
-      break;
+  // 일반 객체나 루트 배열 탐색
+  if (!rawBands.length) {
+   if (Array.isArray(data)) rawBands = data;
+   else if (typeof data === 'object' && data !== null) {
+    rawBands = data.bands || data.filters || data.eq || data.parametric || [];
+    if (!rawBands.length) {
+     for (let k in data) {
+      if (Array.isArray(data[k]) && data[k].length > 0) {
+       rawBands = data[k];
+       break;
+      }
      }
     }
    }
   }
 
-  if (Array.isArray(rawBands) && rawBands.length) {
+  if (rawBands.length) {
    const mappedBands = rawBands.map(b => {
-    if (!b || typeof b !== 'object') return null;
+    if (!b) return null;
+
+    // Poweramp는 String이나 단출된 객체로 올 때가 있음
+    if (typeof b === 'string') {
+     const m = b.match(/([\d.]+)\s*Hz\s*,?\s*(-?[\d.]+)\s*dB\s*,?\s*Q?\s*([\d.]+)?/i);
+     if (m) return { type: 3, frequency: parseFloat(m[1]), gain: parseFloat(m[2]), q: parseFloat(m[3] || 1.41) };
+     return null;
+    }
+
+    if (typeof b !== 'object') return null;
 
     let type = 3; 
     const t = b.type ?? b.filterType ?? b.filter_type ?? b.shape ?? b.t ?? '';
@@ -259,7 +268,6 @@ function curveForParsed(parsed, freqs, fs){
  });
 }
 
-// 바이너리 / GZip 압축 해제 지원 파일 로더
 function loadFile(ev){
  const f = ev.target.files[0]; 
  if (!f) return;
@@ -271,12 +279,10 @@ function loadFile(ev){
   let text = '';
   const buffer = e.target.result;
 
-  // 1. Poweramp GZip 압축 해제 시도
   try {
    const decompressed = pako.ungzip(new Uint8Array(buffer), { to: 'string' });
    text = decompressed;
   } catch (gzipErr) {
-   // 2. 압축 파일이 아닌 경우 일반 텍스트 변환 시도
    const decoder = new TextDecoder('utf-8');
    text = decoder.decode(buffer);
   }
@@ -285,17 +291,16 @@ function loadFile(ev){
   
   const parsed = parseInput(text);
   if (parsed) {
-   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드 인식됨` : `${parsed.points.length}개 포인트 인식됨`;
+   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드 감지됨` : `${parsed.points.length}개 포인트 감지됨`;
    statusEl.style.color = 'var(--accent)';
    statusEl.textContent = `✔ [${f.name}] 로드 성공 (${info})`;
    convert();
   } else {
    statusEl.style.color = '#ff6b6b';
-   statusEl.textContent = `✖ [${f.name}] 파일 데이터 파싱 실패.`;
+   statusEl.textContent = `✖ [${f.name}] 파일 데이터를 읽을 수 없습니다.`;
   }
  };
 
- // ArrayBuffer로 바이너리 데이터 읽기
  reader.readAsArrayBuffer(f);
 }
 
