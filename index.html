@@ -65,16 +65,16 @@
 <div class="wrap">
 <div class="card">
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
- <p class="sub">Poweramp(q20 등) 포함 모든 EQ JSON/TXT 파일 지원</p>
+ <p class="sub">Poweramp 내보내기 파일 포함 모든 EQ 파일 변환</p>
 
  <label for="fileInput" class="file-box">
   <span>📁 EQ 파일 선택 (.json / .txt)</span>
-  <small>Poweramp 내보내기 파일(q20 no anc.json 등) 완벽 파싱 지원</small>
+  <small>Poweramp 내보내기 파일(파라메트릭 [2026...].json) 완벽 분석 지원</small>
   <input type="file" id="fileInput" accept="*/*" onchange="loadFile(event)">
  </label>
  <div id="file-status"></div>
 
- <label>EQ 데이터 (텍스트 직접 붙여넣기 가능)</label>
+ <label>EQ 데이터 (직접 붙여넣기 가능)</label>
  <textarea id="json"></textarea>
 
  <div class="row">
@@ -95,7 +95,7 @@
   <span><span class="dot" style="background:#4fa3ff"></span>원본 곡선</span>
   <span><span class="dot" style="background:#ff9f43"></span>그래픽 EQ 근사</span>
  </div>
- <div class="hint">RBJ biquad 공식을 사용해 원본 곡선을 계산하고, 경사하강법으로 지정 주파수의 게인을 최적화합니다.</div>
+ <div class="hint">RBJ biquad 공식을 사용해 원본 곡선을 복원하고 경사하강법으로 각 타겟 주파수의 게인을 최적화합니다.</div>
 </div>
 </div>
 
@@ -128,7 +128,7 @@ function shelfResp(freqs, f0, Q, gainDb, fs, type){
   b2=A*((A+1)-(A-1)*cosw0-2*sqA*alpha);
   a0=(A+1)+(A-1)*cosw0+2*sqA*alpha;
   a1=-2*((A-1)+(A+1)*cosw0);
-  a2=(A+1)+(A-1)*cosw0-2*sqA*alpha;
+  a2=(A+1)-(A-1)*cosw0-2*sqA*alpha;
  } else {
   b0=A*((A+1)+(A-1)*cosw0+2*sqA*alpha);
   b1=-2*A*((A-1)+(A+1)*cosw0);
@@ -160,16 +160,16 @@ function curveFor(bands, freqs, fs){
  return total;
 }
 
-// Poweramp 심층 파서
+// 만능 파서 (Poweramp 특수 문자열 강제 추출 포함)
 function parseInput(text){
  text=(text||'').trim();
  if (!text) return null;
 
+ // 1. 표준 JSON 파싱 시도
  try {
   const data = JSON.parse(text);
   let rawBands = [];
 
-  // Poweramp 특유의 presets 내부 구조 탐색
   if (data.presets && Array.isArray(data.presets)) {
    data.presets.forEach(p => {
     if (p.eq && Array.isArray(p.eq)) rawBands.push(...p.eq);
@@ -178,7 +178,6 @@ function parseInput(text){
    });
   }
 
-  // 일반 객체나 루트 배열 탐색
   if (!rawBands.length) {
    if (Array.isArray(data)) rawBands = data;
    else if (typeof data === 'object' && data !== null) {
@@ -197,14 +196,11 @@ function parseInput(text){
   if (rawBands.length) {
    const mappedBands = rawBands.map(b => {
     if (!b) return null;
-
-    // Poweramp는 String이나 단출된 객체로 올 때가 있음
     if (typeof b === 'string') {
      const m = b.match(/([\d.]+)\s*Hz\s*,?\s*(-?[\d.]+)\s*dB\s*,?\s*Q?\s*([\d.]+)?/i);
      if (m) return { type: 3, frequency: parseFloat(m[1]), gain: parseFloat(m[2]), q: parseFloat(m[3] || 1.41) };
      return null;
     }
-
     if (typeof b !== 'object') return null;
 
     let type = 3; 
@@ -228,7 +224,27 @@ function parseInput(text){
   }
  } catch(e) {}
 
- // GraphicEQ 텍스트
+ // 2. Poweramp 특유의 텍스트/바이너리 문자열 강제 추출 (정규식 마이닝)
+ const extractedBands = [];
+ // 패턴 예: freq=1000 gain=-2.5 q=1.4 또는 1000Hz -2.5dB Q1.4 또는 {"f":1000, "g":-2.5}
+ const matches = text.matchAll(/(?:type["']?\s*:\s*([\w]+)[^}]*)?(?:freq|f|frequency|fc)["']?\s*:\s*([\d.]+)[^}]*(?:gain|g|val|dB)["']?\s*:\s*(-?[\d.]+)[^}]*(?:q|Q|bw|bandwidth)["']?\s*:\s*([\d.]+)?/gi);
+ for (const m of matches) {
+  let type = 3;
+  if (m[1]) {
+   const tu = m[1].toUpperCase();
+   if (tu.includes('LS') || tu.includes('LOW')) type = 0;
+   else if (tu.includes('HS') || tu.includes('HIGH')) type = 1;
+  }
+  extractedBands.push({
+   type,
+   frequency: parseFloat(m[2]),
+   gain: parseFloat(m[3]),
+   q: parseFloat(m[4] || 1.41)
+  });
+ }
+ if (extractedBands.length) return { mode: 'bands', bands: extractedBands };
+
+ // 3. GraphicEQ 텍스트
  const geq = text.match(/GraphicEQ:\s*(.+)/i);
  if (geq) {
   const pts = geq[1].split(';').map(s=>s.trim()).filter(Boolean).map(s=>{
@@ -237,7 +253,7 @@ function parseInput(text){
   if (pts.length) return {mode:'curve', points:pts};
  }
 
- // Equalizer APO / 일반 txt
+ // 4. Equalizer APO / Filter txt
  const lines = text.split(/\r?\n/);
  const bands = [];
  lines.forEach(l => {
@@ -291,13 +307,13 @@ function loadFile(ev){
   
   const parsed = parseInput(text);
   if (parsed) {
-   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드 감지됨` : `${parsed.points.length}개 포인트 감지됨`;
+   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드 파싱됨` : `${parsed.points.length}개 포인트 파싱됨`;
    statusEl.style.color = 'var(--accent)';
    statusEl.textContent = `✔ [${f.name}] 로드 성공 (${info})`;
    convert();
   } else {
    statusEl.style.color = '#ff6b6b';
-   statusEl.textContent = `✖ [${f.name}] 파일 데이터를 읽을 수 없습니다.`;
+   statusEl.textContent = `✖ [${f.name}] 파일 구조 분석 실패.`;
   }
  };
 
@@ -371,7 +387,7 @@ function convert(){
  drawCurve(fitted,'#ff9f43');
 }
 
-// 기본 샘플 데이터
+// 샘플 데이터
 document.getElementById('json').value = JSON.stringify({
  "name":"샘플",
  "bands":[
