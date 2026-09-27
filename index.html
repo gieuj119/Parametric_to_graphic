@@ -22,16 +22,31 @@
  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
  label{display:block;font-size:.78rem;color:var(--muted);margin:10px 0 4px;}
  label:first-child{margin-top:0;}
- textarea{width:100%;min-height:130px;background:transparent;color:var(--text);
+ textarea{width:100%;min-height:110px;background:transparent;color:var(--text);
   border:1px solid var(--border);border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.76rem;resize:vertical;}
  input[type=text],input[type=number]{width:100%;background:transparent;color:var(--text);
   border:1px solid var(--border);border-radius:8px;padding:9px;font-size:.88rem;}
- input[type=file]{width:100%;color:var(--muted);font-size:.76rem;}
+ 
+ /* 파일 업로드 버튼 스타일 개선 */
+ .file-box {
+  border: 1px dashed var(--accent);
+  background: rgba(79, 163, 255, 0.05);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: background 0.2s;
+ }
+ .file-box:hover { background: rgba(79, 163, 255, 0.12); }
+ .file-box span { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+ input[type=file] { display: none; }
+
  .row{display:flex;gap:10px;}
  .row>div{flex:1;min-width:0;}
- button{width:100%;margin-top:14px;padding:13px;border:none;border-radius:10px;
+ button.btn-convert{width:100%;margin-top:14px;padding:13px;border:none;border-radius:10px;
   background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;cursor:pointer;}
- button:active{opacity:.8;}
+ button.btn-convert:active{opacity:.8;}
  table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.85rem;}
  td,th{padding:7px 3px;border-bottom:1px solid var(--border);text-align:center;}
  th{color:var(--muted);font-weight:500;font-size:.72rem;}
@@ -39,7 +54,7 @@
  .legend{display:flex;gap:16px;font-size:.72rem;color:var(--muted);margin-top:6px;}
  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;}
  #err{color:#ff6b6b;font-size:.82rem;margin-top:8px;min-height:1em;}
- #file-status{color:var(--accent);font-size:.8rem;margin-top:6px;font-weight:500;}
+ #file-status{color:var(--accent);font-size:.82rem;margin-top:6px;font-weight:500;word-break:break-all;}
  #result{display:none;}
  .hint{font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.5;}
 </style>
@@ -48,13 +63,16 @@
 <div class="wrap">
 <div class="card">
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
- <p class="sub">파라메트릭 EQ(밴드별 주파수/Q/게인)를 고정 주파수 그래픽 EQ 값으로 근사 변환</p>
+ <p class="sub">파라메트릭 EQ(JSON, txt)를 고정 주파수 그래픽 EQ 값으로 변환</p>
 
- <label>파일 불러오기 (.json / .txt)</label>
- <input type="file" id="fileInput" accept=".json,.txt,text/plain,application/json" onchange="loadFile(event)">
+ <!-- 파일 선택 영역 -->
+ <label for="fileInput" class="file-box">
+  <span>📁 JSON 또는 TXT 파일 불러오기</span>
+  <input type="file" id="fileInput" accept="*/*" onchange="loadFile(event)">
+ </label>
  <div id="file-status"></div>
 
- <label>파라메트릭 EQ 데이터 (직접 수정/확인 가능)</label>
+ <label>EQ 데이터 (붙여넣기 또는 자동입력)</label>
  <textarea id="json"></textarea>
 
  <div class="row">
@@ -64,7 +82,7 @@
   <div><label>그래픽 EQ의 Q</label><input id="q" type="number" value="1.1" step="0.1"></div>
   <div><label>샘플레이트</label><input id="fs" type="number" value="48000"></div>
  </div>
- <button onclick="convert()">변환하기</button>
+ <button class="btn-convert" onclick="convert()">변환하기</button>
  <div id="err"></div>
 </div>
 
@@ -75,7 +93,7 @@
   <span><span class="dot" style="background:#4fa3ff"></span>원본 곡선</span>
   <span><span class="dot" style="background:#ff9f43"></span>그래픽 EQ 근사</span>
  </div>
- <div class="hint">각 밴드 필터를 RBJ biquad 공식으로 계산해 원본 곡선을 만들고, 지정한 주파수·Q의 피킹 필터 게인을 경사하강법으로 최적화해 원본과 가장 비슷한 곡선이 되도록 맞춘 값이에요. 밴드 간 간섭까지 반영돼서 단순히 그래프 값을 읽는 것보다 정확해요.</div>
+ <div class="hint">각 밴드 필터를 RBJ biquad 공식으로 계산해 원본 곡선을 만들고, 경사하강법으로 각 타겟 주파수의 게인을 최적화하여 원본과 가장 유사한 곡선을 만듭니다.</div>
 </div>
 </div>
 
@@ -97,6 +115,7 @@ function peakResp(freqs, f0, Q, gainDb, fs){
   return 20*Math.log10(mag);
  });
 }
+
 function shelfResp(freqs, f0, Q, gainDb, fs, type){
  if(gainDb===0) return freqs.map(()=>0);
  const A=Math.pow(10,gainDb/40), w0=2*Math.PI*f0/fs, alpha=Math.sin(w0)/(2*Q), cosw0=Math.cos(w0), sqA=Math.sqrt(A);
@@ -113,7 +132,7 @@ function shelfResp(freqs, f0, Q, gainDb, fs, type){
   b1=-2*A*((A-1)+(A+1)*cosw0);
   b2=A*((A+1)-(A-1)*cosw0-2*sqA*alpha);
   a0=(A+1)-(A-1)*cosw0+2*sqA*alpha;
-  a1=2*((A-1)-(A+1)*cosw0);
+  a1=2*((A-1)+(A+1)*cosw0);
   a2=(A+1)-(A-1)*cosw0-2*sqA*alpha;
  }
  b0/=a0;b1/=a0;b2/=a0;const a1n=a1/a0,a2n=a2/a0;
@@ -127,6 +146,7 @@ function shelfResp(freqs, f0, Q, gainDb, fs, type){
   return 20*Math.log10(mag);
  });
 }
+
 function curveFor(bands, freqs, fs){
  const total=freqs.map(()=>0);
  bands.forEach(b=>{
@@ -138,33 +158,70 @@ function curveFor(bands, freqs, fs){
  return total;
 }
 
+// JSON / TXT 파일 파서
 function parseInput(text){
  text=(text||'').trim();
- try{
-  const data=JSON.parse(text);
-  const bands=data.bands||data;
-  if(Array.isArray(bands)&&bands.length) return {mode:'bands', bands};
- }catch(e){}
- const geq=text.match(/GraphicEQ:\s*(.+)/i);
- if(geq){
-  const pts=geq[1].split(';').map(s=>s.trim()).filter(Boolean).map(s=>{
-   const p=s.split(/\s+/); return {f:parseFloat(p[0]), g:parseFloat(p[1])};
+ if (!text) return null;
+
+ // 1. JSON 분석 (어떤 포맷이든 전부 대응)
+ try {
+  const data = JSON.parse(text);
+  let rawBands = Array.isArray(data) ? data : null;
+  
+  if (!rawBands && typeof data === 'object') {
+   rawBands = data.bands || data.filters || data.eq || data.parametricFilters || data.parametric;
+  }
+
+  if (Array.isArray(rawBands) && rawBands.length) {
+   const mappedBands = rawBands.map(b => {
+    let type = 3; 
+    const t = (b.type !== undefined) ? b.type : (b.filterType || b.filter_type || b.shape || '');
+    
+    if (typeof t === 'string') {
+     const tu = t.toUpperCase();
+     if (tu.includes('LS') || tu.includes('LOW')) type = 0;
+     else if (tu.includes('HS') || tu.includes('HIGH')) type = 1;
+     else type = 3;
+    } else if (typeof t === 'number') {
+     type = t;
+    }
+
+    const freq = parseFloat(b.frequency || b.freq || b.f || b.fc || 0);
+    const gain = parseFloat(b.gain || b.g || b.dB || 0);
+    const q = parseFloat(b.q || b.Q || b.bandwidth || b.bw || 1.41);
+
+    return { type, frequency: freq, gain, q };
+   }).filter(b => !isNaN(b.frequency) && b.frequency > 0);
+
+   if (mappedBands.length) return { mode: 'bands', bands: mappedBands };
+  }
+ } catch(e) {}
+
+ // 2. GraphicEQ: 텍스트
+ const geq = text.match(/GraphicEQ:\s*(.+)/i);
+ if (geq) {
+  const pts = geq[1].split(';').map(s=>s.trim()).filter(Boolean).map(s=>{
+   const p = s.split(/\s+/); return {f:parseFloat(p[0]), g:parseFloat(p[1])};
   }).filter(p=>!isNaN(p.f)&&!isNaN(p.g));
-  if(pts.length) return {mode:'curve', points:pts};
+  if (pts.length) return {mode:'curve', points:pts};
  }
- const re=/Filter\s+\d+:\s*ON\s+(PK|LSC|HSC|LS|HS)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB\s+Q\s+([\d.]+)/i;
- const bands=[];
- text.split(/\r?\n/).forEach(l=>{
-  const m=l.match(re);
-  if(m){
-   const k=m[1].toUpperCase();
-   const type=k==='PK'?3:((k==='LSC'||k==='LS')?0:1);
-   bands.push({type, frequency:parseFloat(m[2]), q:parseFloat(m[4]), gain:parseFloat(m[3])});
+
+ // 3. Equalizer APO / 일반 txt 텍스트 분석
+ const lines = text.split(/\r?\n/);
+ const bands = [];
+ lines.forEach(l => {
+  const m1 = l.match(/(?:Filter\s*\d*:?\s*)?(?:ON\s+)?(PK|LSC|HSC|LS|HS|PEAK|LOW_SHELF|HIGH_SHELF)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB\s+Q\s+([\d.]+)/i);
+  if (m1) {
+   const k = m1[1].toUpperCase();
+   const type = (k==='PK'||k==='PEAK') ? 3 : ((k==='LSC'||k==='LS'||k==='LOW_SHELF') ? 0 : 1);
+   bands.push({ type, frequency: parseFloat(m1[2]), q: parseFloat(m1[4]), gain: parseFloat(m1[3]) });
   }
  });
- if(bands.length) return {mode:'bands', bands};
+
+ if (bands.length) return { mode: 'bands', bands };
  return null;
 }
+
 function curveForParsed(parsed, freqs, fs){
  if(parsed.mode==='bands') return curveFor(parsed.bands, freqs, fs);
  const pts=parsed.points.slice().sort((a,b)=>a.f-b.f);
@@ -180,42 +237,41 @@ function curveForParsed(parsed, freqs, fs){
  });
 }
 
-// 파일 불러오기 함수 수정
+// 파일 선택 시 동작
 function loadFile(ev){
- const f=ev.target.files[0]; if(!f) return;
- const statusEl=document.getElementById('file-status');
- const reader=new FileReader();
- reader.onload=e=>{
-  const text=e.target.result;
-  document.getElementById('json').value=text;
+ const f = ev.target.files[0]; 
+ if (!f) return;
+ 
+ const statusEl = document.getElementById('file-status');
+ const reader = new FileReader();
+
+ reader.onload = e => {
+  const text = e.target.result;
+  document.getElementById('json').value = text;
   
-  // 파싱 결과 확인 및 상태 업데이트
-  const parsed=parseInput(text);
-  if(parsed){
-   let info = '';
-   if(parsed.mode==='bands') info = `파라메트릭 EQ (${parsed.bands.length}개 밴드 감지됨)`;
-   else if(parsed.mode==='curve') info = `그래픽 EQ 포인트 (${parsed.points.length}개 포인트 감지됨)`;
+  const parsed = parseInput(text);
+  if (parsed) {
+   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드` : `${parsed.points.length}개 포인트`;
    statusEl.style.color = 'var(--accent)';
-   statusEl.textContent = `✔ 파일 로드 성공: ${f.name} - ${info}`;
-   
-   // 파일 로드 후 자동으로 변환 실행
-   convert();
+   statusEl.textContent = `✔ 성공: [${f.name}] 불러옴 (${info})`;
+   convert(); // 파일 로드 즉시 자동으로 변환 실행
   } else {
    statusEl.style.color = '#ff6b6b';
-   statusEl.textContent = `✖ ${f.name} 로드 실패: 올바른 EQ 형식이 아닙니다.`;
+   statusEl.textContent = `✖ 실패: [${f.name}] 지원하지 않는 형식입니다.`;
   }
  };
+
  reader.readAsText(f);
 }
 
 function convert(){
  const errEl=document.getElementById('err'); errEl.textContent='';
  const parsed=parseInput(document.getElementById('json').value);
- if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없어 (JSON / GraphicEQ / Filter 텍스트 지원)'; return; }
+ if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없습니다 (JSON / txt 포맷 지원)'; return; }
  const fs=parseFloat(document.getElementById('fs').value)||48000;
  const Q=parseFloat(document.getElementById('q').value)||1.1;
  const targetFreqs=document.getElementById('freqs').value.split(',').map(s=>parseFloat(s.trim())).filter(n=>!isNaN(n));
- if(!targetFreqs.length){ errEl.textContent='타겟 주파수를 입력해줘'; return; }
+ if(!targetFreqs.length){ errEl.textContent='타겟 주파수를 입력해 주세요.'; return; }
 
  const N=200, grid=[];
  for(let i=0;i<N;i++) grid.push(20*Math.pow(1000,i/(N-1)));
@@ -275,21 +331,14 @@ function convert(){
  drawCurve(fitted,'#ff9f43');
 }
 
+// 기본 샘플 예제 데이터
 document.getElementById('json').value = JSON.stringify({
- "name":"파라메트릭","preamp":0.0,"parametric":true,
+ "name":"샘플",
  "bands":[
-  {"type":0,"channels":0,"frequency":90,"q":0.8,"gain":0.0},
-  {"type":1,"channels":0,"frequency":10000,"q":0.6,"gain":0.0},
-  {"type":3,"channels":0,"frequency":28,"q":0.5,"gain":-3.0},
-  {"type":3,"channels":0,"frequency":150,"q":0.9,"gain":-1.2},
-  {"type":3,"channels":0,"frequency":530,"q":1.0,"gain":1.7},
-  {"type":3,"channels":0,"frequency":1800,"q":1.1,"gain":-3.8},
-  {"type":3,"channels":0,"frequency":5100,"q":2.0,"gain":-6.0},
-  {"type":3,"channels":0,"frequency":5800,"q":0.8,"gain":4.6},
-  {"type":3,"channels":0,"frequency":8100,"q":2.0,"gain":-5.0},
-  {"type":3,"channels":0,"frequency":10000,"q":2.0,"gain":5.0},
-  {"type":3,"channels":0,"frequency":12000,"q":2.0,"gain":-7.7},
-  {"type":3,"channels":0,"frequency":15000,"q":0.6,"gain":8.2}
+  {"type":3,"frequency":150,"q":0.9,"gain":-1.2},
+  {"type":3,"frequency":530,"q":1.0,"gain":1.7},
+  {"type":3,"frequency":1800,"q":1.1,"gain":-3.8},
+  {"type":3,"frequency":5800,"q":0.8,"gain":4.6}
  ]
 }, null, 1);
 </script>
