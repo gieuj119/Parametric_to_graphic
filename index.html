@@ -30,7 +30,7 @@
  .row{display:flex;gap:10px;}
  .row>div{flex:1;min-width:0;}
  button{width:100%;margin-top:14px;padding:13px;border:none;border-radius:10px;
-  background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;}
+  background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;cursor:pointer;}
  button:active{opacity:.8;}
  table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.85rem;}
  td,th{padding:7px 3px;border-bottom:1px solid var(--border);text-align:center;}
@@ -39,6 +39,7 @@
  .legend{display:flex;gap:16px;font-size:.72rem;color:var(--muted);margin-top:6px;}
  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;}
  #err{color:#ff6b6b;font-size:.82rem;margin-top:8px;min-height:1em;}
+ #file-status{color:var(--accent);font-size:.8rem;margin-top:6px;font-weight:500;}
  #result{display:none;}
  .hint{font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.5;}
 </style>
@@ -49,10 +50,12 @@
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
  <p class="sub">파라메트릭 EQ(밴드별 주파수/Q/게인)를 고정 주파수 그래픽 EQ 값으로 근사 변환</p>
 
- <label>파라메트릭 EQ 데이터 (JSON / GraphicEQ txt / Equalizer APO txt)</label>
- <textarea id="json"></textarea>
- <label>또는 파일 불러오기 (.json / .txt)</label>
+ <label>파일 불러오기 (.json / .txt)</label>
  <input type="file" id="fileInput" accept=".json,.txt,text/plain,application/json" onchange="loadFile(event)">
+ <div id="file-status"></div>
+
+ <label>파라메트릭 EQ 데이터 (직접 수정/확인 가능)</label>
+ <textarea id="json"></textarea>
 
  <div class="row">
   <div><label>타겟 주파수(Hz)</label><input id="freqs" type="text" value="65,160,400,1000,2500,6000,14000"></div>
@@ -108,7 +111,7 @@ function shelfResp(freqs, f0, Q, gainDb, fs, type){
  } else {
   b0=A*((A+1)+(A-1)*cosw0+2*sqA*alpha);
   b1=-2*A*((A-1)+(A+1)*cosw0);
-  b2=A*((A+1)+(A-1)*cosw0-2*sqA*alpha);
+  b2=A*((A+1)-(A-1)*cosw0-2*sqA*alpha);
   a0=(A+1)-(A-1)*cosw0+2*sqA*alpha;
   a1=2*((A-1)-(A+1)*cosw0);
   a2=(A+1)-(A-1)*cosw0-2*sqA*alpha;
@@ -176,10 +179,32 @@ function curveForParsed(parsed, freqs, fs){
   return 0;
  });
 }
+
+// 파일 불러오기 함수 수정
 function loadFile(ev){
  const f=ev.target.files[0]; if(!f) return;
+ const statusEl=document.getElementById('file-status');
  const reader=new FileReader();
- reader.onload=e=>{ document.getElementById('json').value=e.target.result; };
+ reader.onload=e=>{
+  const text=e.target.result;
+  document.getElementById('json').value=text;
+  
+  // 파싱 결과 확인 및 상태 업데이트
+  const parsed=parseInput(text);
+  if(parsed){
+   let info = '';
+   if(parsed.mode==='bands') info = `파라메트릭 EQ (${parsed.bands.length}개 밴드 감지됨)`;
+   else if(parsed.mode==='curve') info = `그래픽 EQ 포인트 (${parsed.points.length}개 포인트 감지됨)`;
+   statusEl.style.color = 'var(--accent)';
+   statusEl.textContent = `✔ 파일 로드 성공: ${f.name} - ${info}`;
+   
+   // 파일 로드 후 자동으로 변환 실행
+   convert();
+  } else {
+   statusEl.style.color = '#ff6b6b';
+   statusEl.textContent = `✖ ${f.name} 로드 실패: 올바른 EQ 형식이 아닙니다.`;
+  }
+ };
  reader.readAsText(f);
 }
 
