@@ -27,19 +27,20 @@
  input[type=text],input[type=number]{width:100%;background:transparent;color:var(--text);
   border:1px solid var(--border);border-radius:8px;padding:9px;font-size:.88rem;}
  
- /* 파일 업로드 버튼 스타일 개선 */
  .file-box {
   border: 1px dashed var(--accent);
-  background: rgba(79, 163, 255, 0.05);
+  background: rgba(79, 163, 255, 0.06);
   border-radius: 10px;
-  padding: 14px;
+  padding: 16px 12px;
   text-align: center;
   cursor: pointer;
   margin-bottom: 12px;
-  transition: background 0.2s;
+  transition: background 0.2s, border-color 0.2s;
+  display: block;
  }
  .file-box:hover { background: rgba(79, 163, 255, 0.12); }
- .file-box span { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+ .file-box span { font-size: 0.88rem; color: var(--accent); font-weight: 600; display: block; }
+ .file-box small { font-size: 0.72rem; color: var(--muted); margin-top: 4px; display: block; }
  input[type=file] { display: none; }
 
  .row{display:flex;gap:10px;}
@@ -54,7 +55,7 @@
  .legend{display:flex;gap:16px;font-size:.72rem;color:var(--muted);margin-top:6px;}
  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;}
  #err{color:#ff6b6b;font-size:.82rem;margin-top:8px;min-height:1em;}
- #file-status{color:var(--accent);font-size:.82rem;margin-top:6px;font-weight:500;word-break:break-all;}
+ #file-status{color:var(--accent);font-size:.82rem;margin-bottom:10px;font-weight:500;word-break:break-all;}
  #result{display:none;}
  .hint{font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.5;}
 </style>
@@ -63,16 +64,17 @@
 <div class="wrap">
 <div class="card">
  <h1>파라메트릭 → 그래픽 EQ 변환기</h1>
- <p class="sub">파라메트릭 EQ(JSON, txt)를 고정 주파수 그래픽 EQ 값으로 변환</p>
+ <p class="sub">파라메트릭 EQ(JSON, TXT)를 고정 주파수 그래픽 EQ 값으로 변환</p>
 
- <!-- 파일 선택 영역 -->
+ <!-- 파일 불러오기 버튼 -->
  <label for="fileInput" class="file-box">
-  <span>📁 JSON 또는 TXT 파일 불러오기</span>
+  <span>📁 EQ 파일 선택하기 (.json / .txt)</span>
+  <small>Squiglink, AutoEq, Wavelet, Peace 등 모든 파라메트릭 파일 지원</small>
   <input type="file" id="fileInput" accept="*/*" onchange="loadFile(event)">
  </label>
  <div id="file-status"></div>
 
- <label>EQ 데이터 (붙여넣기 또는 자동입력)</label>
+ <label>EQ 데이터 (붙여넣기 또는 파일 선택 시 자동 입력)</label>
  <textarea id="json"></textarea>
 
  <div class="row">
@@ -93,7 +95,7 @@
   <span><span class="dot" style="background:#4fa3ff"></span>원본 곡선</span>
   <span><span class="dot" style="background:#ff9f43"></span>그래픽 EQ 근사</span>
  </div>
- <div class="hint">각 밴드 필터를 RBJ biquad 공식으로 계산해 원본 곡선을 만들고, 경사하강법으로 각 타겟 주파수의 게인을 최적화하여 원본과 가장 유사한 곡선을 만듭니다.</div>
+ <div class="hint">각 밴드 필터를 RBJ biquad 공식으로 계산해 원본 곡선을 만들고, 경사하강법으로 지정된 주파수의 게인을 최적화하여 원본과 가장 일치하는 그래프를 생성합니다.</div>
 </div>
 </div>
 
@@ -158,46 +160,64 @@ function curveFor(bands, freqs, fs){
  return total;
 }
 
-// JSON / TXT 파일 파서
+// 모든 종류의 JSON 및 TXT 구조를 지원하는 범용 파서
 function parseInput(text){
  text=(text||'').trim();
  if (!text) return null;
 
- // 1. JSON 분석 (어떤 포맷이든 전부 대응)
+ // 1. JSON 형태 파싱
  try {
   const data = JSON.parse(text);
-  let rawBands = Array.isArray(data) ? data : null;
-  
-  if (!rawBands && typeof data === 'object') {
-   rawBands = data.bands || data.filters || data.eq || data.parametricFilters || data.parametric;
+  let rawBands = null;
+
+  if (Array.isArray(data)) {
+   rawBands = data;
+  } else if (typeof data === 'object' && data !== null) {
+   // 배열 탐색 (bands, filters, eq, parametric 등 모든 Key 검사)
+   rawBands = data.bands || data.filters || data.eq || data.parametricFilters || data.parametric || data.filter;
+   if (!rawBands) {
+    for (let key in data) {
+     if (Array.isArray(data[key]) && data[key].length > 0) {
+      rawBands = data[key];
+      break;
+     }
+    }
+   }
+   // 키-값 쌍 객체인 경우 (예: {"1000": -3.0})
+   if (!rawBands) {
+    const keys = Object.keys(data);
+    if (keys.some(k => !isNaN(parseFloat(k)))) {
+     rawBands = keys.map(k => ({ freq: parseFloat(k), gain: parseFloat(data[k]) }));
+    }
+   }
   }
 
   if (Array.isArray(rawBands) && rawBands.length) {
    const mappedBands = rawBands.map(b => {
-    let type = 3; 
-    const t = (b.type !== undefined) ? b.type : (b.filterType || b.filter_type || b.shape || '');
-    
+    if (!b || typeof b !== 'object') return null;
+
+    let type = 3; // 기본 Peak Filter
+    const t = b.type ?? b.filterType ?? b.filter_type ?? b.shape ?? b.t ?? '';
     if (typeof t === 'string') {
      const tu = t.toUpperCase();
      if (tu.includes('LS') || tu.includes('LOW')) type = 0;
      else if (tu.includes('HS') || tu.includes('HIGH')) type = 1;
-     else type = 3;
     } else if (typeof t === 'number') {
      type = t;
     }
 
-    const freq = parseFloat(b.frequency || b.freq || b.f || b.fc || 0);
-    const gain = parseFloat(b.gain || b.g || b.dB || 0);
-    const q = parseFloat(b.q || b.Q || b.bandwidth || b.bw || 1.41);
+    const freq = parseFloat(b.frequency ?? b.freq ?? b.f ?? b.fc ?? b.Hz ?? b.hz ?? 0);
+    const gain = parseFloat(b.gain ?? b.g ?? b.dB ?? b.db ?? b.val ?? b.value ?? 0);
+    const q = parseFloat(b.q ?? b.Q ?? b.bandwidth ?? b.bw ?? b.qFactor ?? 1.41);
 
     return { type, frequency: freq, gain, q };
-   }).filter(b => !isNaN(b.frequency) && b.frequency > 0);
+   }).filter(b => b && !isNaN(b.frequency) && b.frequency > 0);
 
    if (mappedBands.length) return { mode: 'bands', bands: mappedBands };
   }
  } catch(e) {}
 
- // 2. GraphicEQ: 텍스트
+ // 2. GraphicEQ: 텍스트 방식
  const geq = text.match(/GraphicEQ:\s*(.+)/i);
  if (geq) {
   const pts = geq[1].split(';').map(s=>s.trim()).filter(Boolean).map(s=>{
@@ -206,7 +226,7 @@ function parseInput(text){
   if (pts.length) return {mode:'curve', points:pts};
  }
 
- // 3. Equalizer APO / 일반 txt 텍스트 분석
+ // 3. Equalizer APO / 일반 txt 방식
  const lines = text.split(/\r?\n/);
  const bands = [];
  lines.forEach(l => {
@@ -237,7 +257,7 @@ function curveForParsed(parsed, freqs, fs){
  });
 }
 
-// 파일 선택 시 동작
+// 파일 선택 처리
 function loadFile(ev){
  const f = ev.target.files[0]; 
  if (!f) return;
@@ -251,13 +271,13 @@ function loadFile(ev){
   
   const parsed = parseInput(text);
   if (parsed) {
-   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드` : `${parsed.points.length}개 포인트`;
+   let info = (parsed.mode==='bands') ? `${parsed.bands.length}개 밴드 파싱됨` : `${parsed.points.length}개 포인트 파싱됨`;
    statusEl.style.color = 'var(--accent)';
-   statusEl.textContent = `✔ 성공: [${f.name}] 불러옴 (${info})`;
-   convert(); // 파일 로드 즉시 자동으로 변환 실행
+   statusEl.textContent = `✔ [${f.name}] 로드 완료 (${info})`;
+   convert();
   } else {
    statusEl.style.color = '#ff6b6b';
-   statusEl.textContent = `✖ 실패: [${f.name}] 지원하지 않는 형식입니다.`;
+   statusEl.textContent = `✖ [${f.name}] 파일에서 유효한 EQ 데이터를 찾을 수 없습니다.`;
   }
  };
 
@@ -267,7 +287,7 @@ function loadFile(ev){
 function convert(){
  const errEl=document.getElementById('err'); errEl.textContent='';
  const parsed=parseInput(document.getElementById('json').value);
- if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없습니다 (JSON / txt 포맷 지원)'; return; }
+ if(!parsed){ errEl.textContent='EQ 데이터를 해석할 수 없습니다. (JSON 또는 TXT 형식)'; return; }
  const fs=parseFloat(document.getElementById('fs').value)||48000;
  const Q=parseFloat(document.getElementById('q').value)||1.1;
  const targetFreqs=document.getElementById('freqs').value.split(',').map(s=>parseFloat(s.trim())).filter(n=>!isNaN(n));
@@ -331,7 +351,7 @@ function convert(){
  drawCurve(fitted,'#ff9f43');
 }
 
-// 기본 샘플 예제 데이터
+// 초기 샘플 데이터
 document.getElementById('json').value = JSON.stringify({
  "name":"샘플",
  "bands":[
